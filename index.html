@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign In — Attendance Register</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="center-screen">
+  <div class="ledger-card">
+    <!-- Centered Logo Image -->
+<img 
+  src="logo.png" 
+  alt="Logo" 
+  style="display: block; margin: 0 auto 12px auto; max-width: 100px; height: auto;"
+>
+    <h1 style="text-align: center;">تسجيل الدخول</h1>
+     
+
+    <div id="errorBox" class="error-msg"></div>
+
+    <form id="loginForm">
+      <label for="teacherName">الأسم</label>
+      <input type="text" id="teacherName" required autocomplete="username" placeholder="e.g. Ahmed Ali">
+
+      <label for="pin">الرقم</label>
+      <input type="password" id="pin" required inputmode="numeric" pattern="[0-9]*" minlength="6" maxlength="6" autocomplete="current-password" placeholder="••••••">
+
+      <button type="submit" class="primary" id="submitBtn">تسجيل</button>
+    </form>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script>
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // If already signed in, skip straight to the dashboard
+  sb.auth.getSession().then(({ data }) => {
+    if (data.session) window.location.href = "dashboard.html";
+  });
+
+  const form = document.getElementById("loginForm");
+  const errorBox = document.getElementById("errorBox");
+  const submitBtn = document.getElementById("submitBtn");
+
+  // Turns a teacher's name into the same internal login address used when
+  // their account was created (see README Step 4). Teachers never see this.
+  function nameToInternalEmail(name) {
+    const slug = name.trim().toLowerCase().replace(/\s+/g, ".").replace(/[^a-z0-9.]/g, "");
+    return slug + "@learningcenter.local";
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorBox.classList.remove("show");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Signing in...";
+
+    const name = document.getElementById("teacherName").value;
+    const email = nameToInternalEmail(name);
+    const pin = document.getElementById("pin").value.trim();
+
+    const { error } = await sb.auth.signInWithPassword({ email, password: pin });
+
+    if (error) {
+      errorBox.textContent = "اسم المستخدم أو رمز PIN غير صحيح. يرجى التحقق وإعادة المحاولة.";
+      errorBox.classList.add("show");
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Sign in";
+      return;
+    }
+
+    window.location.href = "dashboard.html";
+  });
+</script>
+</body>
+</html>
