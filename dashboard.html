@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attendance — Register</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"> تسجيل الحضور</div>
+  <div class="who">
+    <span id="teacherLabel">Loading...</span>
+    <button class="linklike" id="signOutBtn">تسجيل خروج</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="page-head">
+    <div>
+      <div id="classLabel">CLASS</div>
+      <h1 id="classTitle">—</h1>
+    </div>
+    <div class="date-picker">
+      <span class="mono" style="font-size:0.8rem;color:var(--ink-soft);">التاريخ</span>
+      <input type="date" id="datePicker">
+    </div>
+  </div>
+
+  <div id="summaryChips" class="summary-chips" style="display:none;">
+    <span class="chip present" id="chipPresent">0 present</span>
+    <span class="chip absent" id="chipAbsent">0 absent</span>
+    <span class="chip late" id="chipLate">0 late</span>
+  </div>
+
+  <div id="content" class="loading">Loading roster...</div>
+
+  <div class="save-bar" id="saveBar" style="display:none;">
+    <span class="status" id="saveStatus"></span>
+    <button class="primary" id="saveBtn">حفظ الحضور</button>
+  </div>
+
+</div>
+
+<script src="config.js"></script>
+<script>
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let currentUser = null;
+  let classId = null;
+  let students = [];
+  let attendanceState = {}; // { student_id: 'present' | 'absent' | 'late' }
+
+  const contentEl = document.getElementById("content");
+  const datePicker = document.getElementById("datePicker");
+  const saveBar = document.getElementById("saveBar");
+  const saveStatus = document.getElementById("saveStatus");
+  const summaryChips = document.getElementById("summaryChips");
+
+  function todayStr() {
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+  datePicker.value = todayStr();
+
+  async function init() {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { window.location.href = "index.html"; return; }
+    currentUser = session.user;
+
+    const { data: teacherRow, error: teacherErr } = await sb
+      .from("teachers")
+      .select("name, class_id, classes(name)")
+      .eq("user_id", currentUser.id)
+      .single();
+
+    if (teacherErr || !teacherRow) {
+      contentEl.innerHTML = "<div class='empty-state'>Couldn't find a teacher record linked to this account. Ask your admin to check the setup.</div>";
+      return;
+    }
+
+    classId = teacherRow.class_id;
+    document.getElementById("teacherLabel").textContent = teacherRow.name;
+    document.getElementById("classLabel").textContent = "أسم الـصف";
+    document.getElementById("classTitle").textContent = teacherRow.classes.name;
+
+    await loadRoster();
+    await loadAttendanceForDate(datePicker.value);
+  }
+
+  async function loadRoster() {
+    const { data, error } = await sb
+      .from("students")
+      .select("id, name")
+      .eq("class_id", classId)
+      .order("name");
+
+    if (error || !data || data.length === 0) {
+      contentEl.innerHTML = "<div class='empty-state'>No students found for this class yet.</div>";
+      return;
+    }
+    students = data;
+  }
+
+  async function loadAttendanceForDate(date) {
+    attendanceState = {};
+    if (!students.length) return;
+
+    const studentIds = students.map(s => s.id);
+    const { data } = await sb
+      .from("attendance")
+      .select("student_id, status")
+      .eq("date", date)
+      .in("student_id", studentIds);
+
+    (data || []).forEach(row => { attendanceState[row.student_id] = row.status; });
+    render();
+  }
+
+  function render() {
+    if (!students.length) return;
+
+    let html = "<div class='roster'>";
+    students.forEach((s, i) => {
+      const status = attendanceState[s.id] || null;
+      html += `
+        <div class="roster-row">
+          <span class="num mono">${i+1}</span>
+          <span class="student-name">${escapeHtml(s.name)}</span>
+          <span class="stamp-group">
+            <button class="stamp present ${status==='present'?'active':''}" data-id="${s.id}" data-status="present">حاضر</button>
+            <button class="stamp absent ${status==='absent'?'active':''}" data-id="${s.id}" data-status="absent">غائب</button>
+            <button class="stamp late ${status==='late'?'active':''}" data-id="${s.id}" data-status="late">متأخر</button>
+          </span>
+        </div>`;
+    });
+    html += "</div>";
+    contentEl.className = "";
+    contentEl.innerHTML = html;
+
+    document.querySelectorAll(".stamp").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        const status = btn.dataset.status;
+        attendanceState[id] = attendanceState[id] === status ? null : status;
+        if (attendanceState[id] === null) delete attendanceState[id];
+        render();
+        updateSummary();
+        saveStatus.textContent = "Unsaved changes";
+        saveStatus.className = "status";
+      });
+    });
+
+    saveBar.style.display = "flex";
+    updateSummary();
+  }
+
+  function updateSummary() {
+    const counts = { present: 0, absent: 0, late: 0 };
+    Object.values(attendanceState).forEach(s => { if (counts[s] !== undefined) counts[s]++; });
+    document.getElementById("chipPresent").textContent = counts.present + " present";
+    document.getElementById("chipAbsent").textContent = counts.absent + " absent";
+    document.getElementById("chipLate").textContent = counts.late + " late";
+    summaryChips.style.display = "flex";
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  datePicker.addEventListener("change", () => {
+    contentEl.className = "loading";
+    contentEl.textContent = "Loading roster...";
+    saveBar.style.display = "none";
+    summaryChips.style.display = "none";
+    loadAttendanceForDate(datePicker.value);
+  });
+
+  document.getElementById("saveBtn").addEventListener("click", async () => {
+    const date = datePicker.value;
+    const rows = students
+      .filter(s => attendanceState[s.id])
+      .map(s => ({
+        student_id: s.id,
+        date: date,
+        status: attendanceState[s.id],
+        marked_by: currentUser.id
+      }));
+
+    saveStatus.textContent = "Saving...";
+    saveStatus.className = "status";
+
+    const { error } = await sb
+      .from("attendance")
+      .upsert(rows, { onConflict: "student_id,date" });
+
+    if (error) {
+      saveStatus.textContent = "Couldn't save — try again.";
+      saveStatus.className = "status";
+    } else {
+      saveStatus.textContent = "Saved ✓";
+      saveStatus.className = "status saved";
+    }
+  });
+
+  document.getElementById("signOutBtn").addEventListener("click", async () => {
+    await sb.auth.signOut();
+    window.location.href = "index.html";
+  });
+
+  init();
+</script>
+</body>
+</html>
